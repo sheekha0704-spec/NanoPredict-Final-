@@ -102,7 +102,7 @@ steps = ["Step 1: Sourcing", "Step 2: Solubility", "Step 3: Ternary", "Step 4: A
 nav = st.sidebar.radio("Navigation", steps, index=st.session_state.nav_index)
 st.session_state.nav_index = steps.index(nav)
 
-# --- STEP 1: SOURCING & RECOMMENDATIONS ---
+# --- STEP 1: SOURCING & AI RECOMMENDATIONS ---
 if nav == "Step 1: Sourcing":
     st.header("Step 1: Molecular Sourcing & AI Recommendations")
     
@@ -126,17 +126,20 @@ if nav == "Step 1: Sourcing":
             st.session_state.custom_file = up
             st.rerun()
 
-    # AI Recommendation Engine
-    st.subheader(f"System Recommendations for {st.session_state.drug}")
+    st.divider()
+
+    # AI Recommendation Engine (Ensuring exactly Top 3)
+    st.subheader(f"Top 3 Recommendations for {st.session_state.drug}")
+    
     drug_data = df[df['Drug_Name'] == st.session_state.drug]
     
     if not drug_data.empty:
-        # Pull high-frequency excipients from your specific CSV data
+        # Extract the 3 most frequent excipients used with this drug in your CSV
         rec_o = drug_data['Oil_phase'].value_counts().index.tolist()[:3]
         rec_s = drug_data['Surfactant'].value_counts().index.tolist()[:3]
         rec_cs = drug_data['Co-surfactant'].value_counts().index.tolist()[:3]
     else:
-        # Algorithmic recommendation based on hashing if drug is new
+        # Algorithmic fallback recommendations (Top 3)
         d_seed = int(hashlib.md5(str(st.session_state.drug).encode()).hexdigest(), 16)
         o_p = ["MCT", "Oleic Acid", "Capryol 90", "Sefsol 218", "Soyabean Oil"]
         s_p = ["Tween 80", "Cremophor EL", "Labrasol", "Ethanol", "Span 80"]
@@ -145,12 +148,23 @@ if nav == "Step 1: Sourcing":
         rec_s = [s_p[(d_seed+i)%5] for i in range(3)]
         rec_cs = [cs_p[(d_seed+i)%5] for i in range(3)]
 
+    # Display Recommendations in 3 Clean Columns
     c1, c2, c3 = st.columns(3)
-    c1.success("**Top Oils**\n\n" + "\n".join([f"- {o}" for o in rec_o]))
-    c2.info("**Top Surfactants**\n\n" + "\n".join([f"- {s}" for s in rec_s]))
-    c3.warning("**Top Co-Surfactants**\n\n" + "\n".join([f"- {cs}" for cs in rec_cs]))
     
-    st.info("Formulation selection has been moved to Step 2 for Solubility mapping.")
+    with c1:
+        st.success("**Top 3 Oils**")
+        for o in rec_o: st.markdown(f"* {o}")
+        
+    with c2:
+        st.info("**Top 3 Surfactants**")
+        for s in rec_s: st.markdown(f"* {s}")
+        
+    with c3:
+        st.warning("**Top 3 Co-Surfactants**")
+        for cs in rec_cs: st.markdown(f"* {cs}")
+    
+    st.write("") # Formatting spacer
+    st.info("💡 Formulation selection has been moved to Step 2 for Solubility mapping.")
 
     if st.button("Proceed to Solubility Selection ➡️"): 
         st.session_state.nav_index = 1
