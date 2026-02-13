@@ -34,7 +34,7 @@ def load_and_clean_data(uploaded_file=None):
         
         if df is None: return None
 
-        # COLUMN MAPPING (Synchronized with your CSV)
+        # SYNCED MAPPING (Addressing trailing spaces in your CSV headers)
         column_mapping = {
             'Name Of The Drug ': 'Drug_Name', 
             'Name Of The Oil ': 'Oil_phase',
@@ -70,7 +70,7 @@ def load_and_clean_data(uploaded_file=None):
         
         return df.reset_index(drop=True)
     except Exception as e:
-        st.error(f"Load Error: {e}")
+        st.error(f"Critical Data Error: {e}")
         return None
 
 @st.cache_resource
@@ -84,7 +84,7 @@ def train_models(_data):
         le = LabelEncoder()
         df_enc[col] = le.fit_transform(_data[col].astype(str))
         le_dict[col] = le
-    models = {t: GradientBoostingRegressor(n_estimators=100).fit(df_enc[features], df_enc[t]) for t in targets}
+    models = {t: GradientBoostingRegressor(n_estimators=100, random_state=42).fit(df_enc[features], df_enc[t]) for t in targets}
     return models, le_dict, df_enc[features]
 
 # --- 2. APP SETUP ---
@@ -111,7 +111,7 @@ if nav == "Step 1: Sourcing":
     
     if mode == "Database Selection" and df is not None:
         drug_list = sorted(df['Drug_Name'].unique().tolist())
-        st.session_state.drug = st.selectbox("Select Drug", drug_list)
+        st.session_state.drug = st.selectbox("Select Drug from Database", drug_list)
         
     elif mode == "SMILES String" and RDKIT_AVAILABLE:
         smiles = st.text_input("Enter SMILES", "CN(C)CCOC1=CC=C(C=C1)C(=C(C2=CC=CC=C2)CC)C3=CC=CC=C3")
@@ -120,15 +120,15 @@ if nav == "Step 1: Sourcing":
             st.image(Draw.MolToImage(mol, size=(300, 300)), caption="Molecular Structure")
             st.session_state.mw = Descriptors.MolWt(mol)
             st.session_state.logp = Descriptors.MolLogP(mol)
-            st.session_state.drug = "SMILES Defined Molecule"
+            st.session_state.drug = "Custom SMILES Molecule"
             
     elif mode == "Browse Custom Lab Data":
-        up = st.file_uploader("Upload CSV", type="csv")
+        up = st.file_uploader("Upload New Database CSV", type="csv")
         if up:
             st.session_state.custom_file = up
             st.rerun()
 
-    st.subheader("Formulation Components (Unique to Database)")
+    st.subheader("Component Customization (Unique to Current Data)")
     c1, c2, c3 = st.columns(3)
     with c1: st.session_state.f_o = st.selectbox("Oil Phase", sorted(df['Oil_phase'].unique()))
     with c2: st.session_state.f_s = st.selectbox("Surfactant", sorted(df['Surfactant'].unique()))
@@ -142,20 +142,20 @@ if nav == "Step 1: Sourcing":
 elif nav == "Step 2: Solubility":
     st.header(f"Step 2: Solubility Profiling - {st.session_state.drug}")
     
-    # Check if drug/excipient combo exists in database
-    db_match = df[(df['Drug_Name'] == st.session_state.drug) & (df['Oil_phase'] == st.session_state.f_o)]
+    # Priority 1: Check Database for Drug + Oil combo
+    match = df[(df['Drug_Name'] == st.session_state.drug) & (df['Oil_phase'] == st.session_state.f_o)]
     
-    if not db_match.empty:
-        s_oil = db_match['Sol_Oil'].values[0]
-        s_surf = db_match['Sol_Surf'].values[0]
-        s_cos = db_match['Sol_CoSurf'].values[0]
-        st.info("Values retrieved from Experimental Database.")
+    if not match.empty and match['Sol_Oil'].iloc[0] > 0:
+        s_oil = match['Sol_Oil'].iloc[0]
+        s_surf = match['Sol_Surf'].iloc[0]
+        s_cos = match['Sol_CoSurf'].iloc[0]
+        st.success("Experimental values linked from database.")
     else:
-        # Prediction logic from Chemical Library (MW/LogP based)
-        s_oil = 15.0 + (st.session_state.get('mw', 300)/100)
-        s_surf = 25.0 + (st.session_state.get('logp', 2.0)*2)
-        s_cos = 20.0
-        st.warning("Values predicted via Molecular Descriptors (Not in DB).")
+        # Priority 2: Predict via library logic (MW/LogP)
+        s_oil = 12.5 + (st.session_state.get('mw', 300)/100) * (st.session_state.get('logp', 2.0)/2)
+        s_surf = 20.0 + (st.session_state.get('mw', 300)/50)
+        s_cos = 18.0
+        st.info("Values predicted via Molecular Library engine.")
 
     st.session_state.update({'s_oil': s_oil, 's_surf': s_surf, 's_cos': s_cos})
     
@@ -177,12 +177,13 @@ elif nav == "Step 3: Ternary":
         st.session_state.s_val = st.slider("Smix %", 1.0, 90.0, st.session_state.s_val)
         w_val = 100 - st.session_state.o_val - st.session_state.s_val
         st.metric("Water %", f"{w_val:.2f}%")
+        st.session_state.w_val = w_val
     
     with r:
         za, zb = [2, 10, 25, 5, 2], [45, 80, 65, 40, 45]
         zc = [100 - a - b for a, b in zip(za, zb)]
-        fig = go.Figure(go.Scatterternary({'mode': 'lines', 'fill': 'toself', 'name': 'Stable', 'a': za, 'b': zb, 'c': zc, 'fillcolor': 'rgba(46, 204, 113, 0.3)'}))
-        fig.add_trace(go.Scatterternary(a=[st.session_state.o_val], b=[st.session_state.s_val], c=[w_val], name="Current", marker=dict(color='red', size=12)))
+        fig = go.Figure(go.Scatterternary({'mode': 'lines', 'fill': 'toself', 'name': 'Stable', 'a': za, 'b': zb, 'c': zc, 'fillcolor': 'rgba(52, 152, 219, 0.3)'}))
+        fig.add_trace(go.Scatterternary(a=[st.session_state.o_val], b=[st.session_state.s_val], c=[w_val], name="Current", marker=dict(color='red', size=15, symbol='diamond')))
         st.plotly_chart(fig, use_container_width=True)
     
     if st.button("Proceed to Prediction ➡️"): 
@@ -191,7 +192,7 @@ elif nav == "Step 3: Ternary":
 
 # --- STEP 4: PREDICTION & PDF ---
 elif nav == "Step 4: AI Prediction":
-    st.header(f"Step 4: AI Forecast & Report")
+    st.header(f"Step 4: AI Prediction & Final Report")
     
     def safe_enc(col, val):
         return encoders[col].transform([val])[0] if val in encoders[col].classes_ else 0
@@ -204,36 +205,53 @@ elif nav == "Step 4: AI Prediction":
     }])
     
     res = {t: models[t].predict(in_d)[0] for t in models}
-    stability = 100 - (res['PDI'] * 100) # Simple stability metric logic
+    # Stability Logic based on Zeta and PDI
+    stability = min(100, max(0, (abs(res['Zeta_mV'])/30 * 70) + (max(0, 0.4 - res['PDI'])/0.4 * 30)))
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Size", f"{res['Size_nm']:.1f} nm")
-    c2.metric("Zeta", f"{res['Zeta_mV']:.1f} mV")
-    c3.metric("% EE", f"{res['Encapsulation_Efficiency']:.1f}%")
+    c1.metric("Particle Size", f"{res['Size_nm']:.2f} nm")
+    c2.metric("Zeta Potential", f"{res['Zeta_mV']:.2f} mV")
+    c3.metric("% EE", f"{res['Encapsulation_Efficiency']:.2f}%")
     c4.metric("PDI", f"{res['PDI']:.3f}")
     c5.metric("Stability", f"{stability:.1f}%")
 
-    def generate_full_pdf():
+    st.divider()
+    explainer = shap.Explainer(models['Size_nm'], X_train)
+    sv = explainer(in_d)
+    fig_sh, ax = plt.subplots(figsize=(10, 4))
+    shap.plots.waterfall(sv[0], show=False)
+    st.pyplot(fig_sh)
+
+    def generate_full_pdf(shap_fig):
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(200, 10, "NanoPredict Pro: Comprehensive Lab Report", ln=True, align='C')
+        pdf.set_font("Arial", 'B', 18)
+        pdf.cell(200, 15, "NanoPredict Pro: Comprehensive Formulation Report", ln=True, align='C')
         
-        sections = [
-            ("1. Sourcing", [f"Drug: {st.session_state.drug}", f"Oil: {st.session_state.f_o}", f"Surfactant: {st.session_state.f_s}"]),
-            ("2. Solubility", [f"Oil Solubility: {st.session_state.get('s_oil', 0):.2f} mg/mL", f"Surf Solubility: {st.session_state.get('s_surf', 0):.2f} mg/mL"]),
-            ("3. Composition", [f"Oil: {st.session_state.o_val}%", f"Smix: {st.session_state.s_val}%", f"Water: {100-st.session_state.o_val-st.session_state.s_val:.2f}%"]),
-            ("4. AI Predictions", [f"Size: {res['Size_nm']:.2f} nm", f"Zeta: {res['Zeta_mV']:.2f} mV", f"PDI: {res['PDI']:.3f}", f"Stability: {stability:.1f}%"])
-        ]
+        pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "Step 1: Formulation Sourcing", ln=True)
+        pdf.set_font("Arial", '', 11)
+        pdf.cell(0, 8, f"Drug Candidate: {st.session_state.drug}", ln=True)
+        pdf.cell(0, 8, f"Oil Phase: {st.session_state.f_o} | Surfactant: {st.session_state.f_s} | Co-S: {st.session_state.f_cs}", ln=True)
         
-        for title, lines in sections:
-            pdf.ln(5)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, title, ln=True)
-            pdf.set_font("Arial", '', 11)
-            for line in lines: pdf.cell(0, 8, line, ln=True)
-            
+        pdf.ln(5); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "Step 2: Solubility Profile", ln=True)
+        pdf.set_font("Arial", '', 11)
+        pdf.cell(0, 8, f"Oil Solubility: {st.session_state.get('s_oil', 0):.2f} mg/mL", ln=True)
+        pdf.cell(0, 8, f"Surfactant Solubility: {st.session_state.get('s_surf', 0):.2f} mg/mL", ln=True)
+
+        pdf.ln(5); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "Step 3: Composition Metrics", ln=True)
+        pdf.set_font("Arial", '', 11)
+        pdf.cell(0, 8, f"Oil: {st.session_state.o_val}% | Smix: {st.session_state.s_val}% | Water: {st.session_state.get('w_val', 0):.2f}%", ln=True)
+
+        pdf.ln(5); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "Step 4: AI Predictions", ln=True)
+        pdf.set_font("Arial", '', 11)
+        res_list = [["Particle Size", f"{res['Size_nm']:.2f} nm"], ["Zeta Potential", f"{res['Zeta_mV']:.2f} mV"], ["% EE", f"{res['Encapsulation_Efficiency']:.2f}%"], ["PDI", f"{res['PDI']:.3f}"], ["Stability Score", f"{stability:.1f}%"]]
+        for item in res_list: pdf.cell(80, 8, item[0], 1); pdf.cell(80, 8, item[1], 1, ln=True)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            shap_fig.savefig(tmp.name, format='png', bbox_inches='tight')
+            pdf.image(tmp.name, x=15, w=170)
         return pdf.output(dest='S').encode('latin-1')
 
-    if st.button("Generate Comprehensive Report"):
-        st.download_button("Download Report", data=generate_full_pdf(), file_name="Nano_Report.pdf")
+    if st.button("Generate & Download Final Report"):
+        report_pdf = generate_full_pdf(fig_sh)
+        st.download_button("📥 Click to Download Full PDF", data=report_pdf, file_name=f"Report_{st.session_state.drug}.pdf", mime="application/pdf")
