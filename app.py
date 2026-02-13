@@ -149,6 +149,12 @@ if nav == "Step 1: Sourcing":
     c3.warning("**Recommended Co-Surfactants**\n\n" + "\n".join([f"- {cs}" for cs in rec_cs]))
     
     st.divider()
+    st.markdown("### Selection for Formulation")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1: st.session_state.f_o = st.selectbox("Confirm Oil", sorted(df['Oil_phase'].unique()), index=0)
+    with sc2: st.session_state.f_s = st.selectbox("Confirm Surfactant", sorted(df['Surfactant'].unique()), index=0)
+    with sc3: st.session_state.f_cs = st.selectbox("Confirm Co-Surfactant", sorted(df['Co-surfactant'].unique()), index=0)
+
     if st.button("Proceed to Solubility ➡️"): 
         st.session_state.nav_index = 1
         st.rerun()
@@ -160,6 +166,7 @@ elif nav == "Step 2: Solubility":
     col_l, col_r = st.columns(2)
     with col_l:
         # User selects from dropdowns
+        sel_drug = st.selectbox("Target Drug", sorted(df['Drug_Name'].unique()), index=sorted(df['Drug_Name'].unique()).index(st.session_state.drug) if st.session_state.drug in df['Drug_Name'].unique() else 0)
         sel_oil = st.selectbox("Target Oil", sorted(df['Oil_phase'].unique()), index=sorted(df['Oil_phase'].unique()).index(st.session_state.f_o))
         sel_surf = st.selectbox("Target Surfactant", sorted(df['Surfactant'].unique()), index=sorted(df['Surfactant'].unique()).index(st.session_state.f_s))
         sel_cs = st.selectbox("Target Co-Surfactant", sorted(df['Co-surfactant'].unique()), index=sorted(df['Co-surfactant'].unique()).index(st.session_state.f_cs))
