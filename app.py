@@ -96,7 +96,7 @@ steps = ["Step 1: Sourcing", "Step 2: Solubility", "Step 3: Ternary", "Step 4: A
 nav = st.sidebar.radio("Navigation", steps, index=st.session_state.nav_index)
 st.session_state.nav_index = steps.index(nav)
 
-# --- STEP 1: SOURCING (3 DYNAMIC RECS) ---
+# --- STEP 1: SOURCING (MODIFIED FOR SMILES FIX) ---
 if nav == "Step 1: Sourcing":
     st.header("Step 1: Molecular Sourcing & Structural ID")
     source_mode = st.radio("Sourcing Method:", ["Database Selection", "SMILES Structural Input", "Browse CSV"], horizontal=True)
@@ -104,22 +104,34 @@ if nav == "Step 1: Sourcing":
     if source_mode == "Database Selection" and df is not None:
         drug_list = sorted([x for x in df['Drug_Name'].unique() if x != 'Unknown'])
         st.session_state.drug = st.selectbox("Select Drug", drug_list)
+        
     elif source_mode == "SMILES Structural Input" and RDKIT_AVAILABLE:
         smiles = st.text_input("Enter SMILES", "CC1=NN=C(S1)NC(=O)C")
         mol = Chem.MolFromSmiles(smiles)
         if mol:
             st.image(Draw.MolToImage(mol, size=(250, 250)), caption="Structure")
             st.session_state.logp, st.session_state.mw = Descriptors.MolLogP(mol), Descriptors.MolWt(mol)
-            try: st.session_state.drug = pcp.get_compounds(smiles, 'smiles')[0].iupac_name
-            except: st.session_state.drug = "Custom Molecule"
+            try: 
+                # Ensure the result is cast to a string immediately
+                compounds = pcp.get_compounds(smiles, 'smiles')
+                if compounds:
+                    st.session_state.drug = str(compounds[0].iupac_name)
+                else:
+                    st.session_state.drug = "Custom Molecule"
+            except: 
+                st.session_state.drug = "Custom Molecule"
+                
     elif source_mode == "Browse CSV":
         up = st.file_uploader("Upload Lab CSV", type="csv")
-        if up: st.session_state.custom_file = up; st.rerun()
+        if up: 
+            st.session_state.custom_file = up
+            st.rerun()
 
     # Dynamic 3-Recommendation Logic
-    # Force the drug name to be a string to avoid Tuple errors
-drug_name_str = str(st.session_state.drug)
-d_seed = int(hashlib.md5(drug_name_str.encode()).hexdigest(), 16)
+    # Fix: Ensure st.session_state.drug is treated as a string during encoding
+    drug_str = str(st.session_state.drug)
+    d_seed = int(hashlib.md5(drug_str.encode()).hexdigest(), 16)
+    
     o_pool = ["MCT", "Oleic Acid", "Capryol 90", "Castor Oil", "Labrafac CC"]
     s_pool = ["Tween 80", "Cremophor EL", "Tween 20", "Labrasol", "Poloxamer"]
     cs_pool = ["PEG-400", "Ethanol", "Transcutol-HP", "Propylene Glycol", "Glycerin"]
@@ -130,7 +142,9 @@ d_seed = int(hashlib.md5(drug_name_str.encode()).hexdigest(), 16)
     c2.info("**Recommended Surfactants**\n\n" + "\n".join([f"- {s_pool[(d_seed+i)%5]}" for i in range(3)]))
     c3.warning("**Recommended Co-Surfactants**\n\n" + "\n".join([f"- {cs_pool[(d_seed+i)%5]}" for i in range(3)]))
     
-    if st.button("Proceed to Solubility ➡️"): st.session_state.nav_index = 1; st.rerun()
+    if st.button("Proceed to Solubility ➡️"): 
+        st.session_state.nav_index = 1
+        st.rerun()
 
 # --- STEP 2: SOLUBILITY (FIXED CS DISPLAY) ---
 elif nav == "Step 2: Solubility":
@@ -151,7 +165,7 @@ elif nav == "Step 2: Solubility":
 
     if st.button("Proceed to Ternary ➡️"): st.session_state.nav_index = 2; st.rerun()
 
-# --- STEP 3: TERNARY (UNIQUE BOUNDARY LOGIC) ---
+# --- STEP 3: TERNARY ---
 elif nav == "Step 3: Ternary":
     st.header("Step 3: Phase Behavior Mapping")
     l, r = st.columns([1, 2])
@@ -162,7 +176,6 @@ elif nav == "Step 3: Ternary":
         st.metric("Water %", f"{w_val:.2f}%")
     
     with r:
-        # Unique Boundary Logic: Zones shift based on Drug MW and LogP
         logp = st.session_state.get('logp', 1.5)
         mw_factor = (st.session_state.get('mw', 200) / 500) * 5
         shift = (logp * 1.5) + mw_factor
@@ -175,7 +188,7 @@ elif nav == "Step 3: Ternary":
         st.plotly_chart(fig, use_container_width=True)
     if st.button("Proceed to Prediction ➡️"): st.session_state.nav_index = 3; st.rerun()
 
-# --- STEP 4: PREDICTION & STEP-WISE PDF ---
+# --- STEP 4: PREDICTION & PDF ---
 elif nav == "Step 4: AI Prediction":
     st.header(f"4. AI Prediction for {st.session_state.drug}")
     def s_enc(col, val): return encoders[col].transform([val])[0] if val in encoders[col].classes_ else 0
@@ -200,14 +213,12 @@ elif nav == "Step 4: AI Prediction":
         pdf.set_font("Arial", 'B', 20); pdf.cell(200, 15, "NanoPredict Pro: Submission Report", ln=True, align='C')
         pdf.set_font("Arial", 'I', 10); pdf.cell(200, 10, f"Drug Candidate: {st.session_state.drug}", ln=True, align='C'); pdf.ln(10)
         
-        # Table 1: Composition
         pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "1. Formulation Composition", ln=True)
         pdf.set_font("Arial", '', 11)
         data = [["Oil Phase", st.session_state.f_o, f"{st.session_state.o_val}%"], ["Surfactant", st.session_state.f_s, f"{st.session_state.s_val}%"], ["Co-Surfactant", st.session_state.f_cs, "Included"], ["Water Content", "Distilled", f"{100-st.session_state.o_val-st.session_state.s_val:.2f}%"]]
         for row in data: pdf.cell(60, 8, row[0], 1); pdf.cell(70, 8, row[1], 1); pdf.cell(40, 8, row[2], 1, ln=True)
         pdf.ln(10)
 
-        # Table 2: AI Results
         pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "2. Predicted Physicochemical Results", ln=True)
         pdf.set_font("Arial", '', 11)
         results = [["Droplet Size", f"{res['Size_nm']:.2f} nm"], ["Polydispersity Index", f"{res['PDI']:.3f}"], ["Zeta Potential", f"{res['Zeta_mV']:.2f} mV"], ["Encapsulation Efficiency", f"{res['Encapsulation_Efficiency']:.2f}%"], ["Stability Score", f"{stab:.1f}%"]]
