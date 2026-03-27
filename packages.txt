@@ -1,8 +1,6 @@
-libnss3
-libatk-bridge2.0-0
-libcups2
-libgbm1
-libasound2
-libpangocairo-1.0-0
-libxss1
-libgtk-3-0
+libxrender1
+libxext6
+libsm6
+libfontconfig1
+libgl1
+freeglut3-dev
