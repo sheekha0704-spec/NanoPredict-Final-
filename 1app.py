@@ -12,7 +12,15 @@ import hashlib
 from fpdf import FPDF
 import tempfile
 
-# --- 1. DATA & AI ENGINE ---
+# --- RDKIT & CHEMICAL ENGINE ---
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors, Draw
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+
+# --- 1. DATA ENGINE ---
 @st.cache_data
 def load_and_clean_data(uploaded_file=None):
     try:
@@ -58,17 +66,18 @@ def train_models(_data):
         le = LabelEncoder()
         df_enc[col] = le.fit_transform(_data[col].astype(str))
         le_dict[col] = le
-    models = {t: GradientBoostingRegressor(n_estimators=50, random_state=42).fit(df_enc[features], df_enc[t]) for t in targets}
+    models = {t: GradientBoostingRegressor(n_estimators=100, random_state=42).fit(df_enc[features], df_enc[t]) for t in targets}
     return models, le_dict, df_enc[features]
 
-# --- 2. SESSION INITIALIZATION ---
+# --- 2. APP SETUP ---
 st.set_page_config(page_title="NanoPredict Pro AI", layout="wide")
 
 if 'nav_index' not in st.session_state:
     st.session_state.update({
         'nav_index': 0, 'drug': "Tamoxifen", 'custom_file': None,
         'rec_o': [], 'rec_s': [], 'rec_cs': [],
-        'smix_ratios': [1, 1, 1], 'selected_ternary': 0, 'neb_region': "Stable"
+        'smix_pairs': [[1, 1], [2, 1], [3, 1]], # Smix ratio options
+        'final_smix_choice': "Ratio 1", 'o_val': 10.0, 's_val': 40.0
     })
 
 df = load_and_clean_data(st.session_state.custom_file)
@@ -80,111 +89,123 @@ st.session_state.nav_index = steps.index(nav)
 
 # --- STEP 1: SOURCING ---
 if nav == "Step 1: Sourcing":
-    st.header("Step 1: Molecular Sourcing & Top 5 AI Recommendations")
+    st.header("Step 1: Molecular Sourcing & AI Recommendations")
+    source_mode = st.radio("Sourcing Method:", ["Database Selection", "SMILES Input", "Browse CSV"], horizontal=True)
     
-    if df.empty:
-        st.error("Please upload a CSV file to proceed.")
-        st.session_state.custom_file = st.file_uploader("Upload Lab CSV", type="csv")
-        if st.session_state.custom_file: st.rerun()
-        st.stop()
+    if source_mode == "Database Selection" and not df.empty:
+        drug_list = sorted([str(x) for x in df['Drug_Name'].unique() if pd.notna(x)])
+        st.session_state.drug = st.selectbox("Select Drug", drug_list)
+        
+    elif source_mode == "SMILES Input" and RDKIT_AVAILABLE:
+        smiles = st.text_input("Enter SMILES", "CN(C)CCOC1=CC=C(C=C1)C(=C(C2=CC=CC=C2)CC)C3=CC=CC=C3")
+        mol = Chem.MolFromSmiles(smiles)
+        if mol:
+            st.image(Draw.MolToImage(mol, size=(250, 250)), caption="Structure Identified")
+            st.session_state.drug = "Custom Molecule"
+                
+    elif source_mode == "Browse CSV":
+        up = st.file_uploader("Upload Lab CSV", type="csv")
+        if up: 
+            st.session_state.custom_file = up
+            st.cache_data.clear(); st.rerun()
 
-    drug_list = sorted([str(x) for x in df['Drug_Name'].unique() if pd.notna(x)])
-    st.session_state.drug = st.selectbox("Select Drug for Formulation", drug_list)
+    st.divider()
+    st.subheader(f"Top 5 AI Recommendations for {st.session_state.drug}")
+    
+    if not df.empty:
+        drug_data = df[df['Drug_Name'] == st.session_state.drug]
+        st.session_state.rec_o = drug_data['Oil_phase'].value_counts().index.tolist()[:5] if not drug_data.empty else ["MCT", "Oleic Acid", "Capryol 90", "Labrafac", "Olive Oil"]
+        st.session_state.rec_s = drug_data['Surfactant'].value_counts().index.tolist()[:5] if not drug_data.empty else ["Tween 80", "Cremophor EL", "Labrasol", "Ethanol", "Span 20"]
+        st.session_state.rec_cs = drug_data['Co-surfactant'].value_counts().index.tolist()[:5] if not drug_data.empty else ["PEG-400", "Transcutol", "PG", "Tween 20", "Span 80"]
 
-    # Recommendation Logic (Top 5)
-    drug_data = df[df['Drug_Name'] == st.session_state.drug]
-    if not drug_data.empty:
-        st.session_state.rec_o = drug_data['Oil_phase'].value_counts().index.tolist()[:5]
-        st.session_state.rec_s = drug_data['Surfactant'].value_counts().index.tolist()[:5]
-        st.session_state.rec_cs = drug_data['Co-surfactant'].value_counts().index.tolist()[:5]
-    else:
-        st.session_state.rec_o = ["MCT", "Oleic Acid", "Capryol 90", "Labrafac", "Olive Oil"]
-        st.session_state.rec_s = ["Tween 80", "Cremophor EL", "Labrasol", "Ethanol", "Span 20"]
-        st.session_state.rec_cs = ["PEG-400", "Transcutol", "Propylene Glycol", "Tween 20", "Span 80"]
+        c1, c2, c3 = st.columns(3)
+        with c1: st.success("**Top 5 Oils**"); [st.markdown(f"* {o}") for o in st.session_state.rec_o]
+        with c2: st.info("**Top 5 Surfactants**"); [st.markdown(f"* {s}") for s in st.session_state.rec_s]
+        with c3: st.warning("**Top 5 Co-Surfactants**"); [st.markdown(f"* {cs}") for cs in st.session_state.rec_cs]
 
-    c1, c2, c3 = st.columns(3)
-    with c1: st.success("**Top 5 Recommended Oils**"); [st.markdown(f"{i+1}. {o}") for i, o in enumerate(st.session_state.rec_o)]
-    with c2: st.info("**Top 5 Recommended Surfactants**"); [st.markdown(f"{i+1}. {s}") for i, s in enumerate(st.session_state.rec_s)]
-    with c3: st.warning("**Top 5 Recommended Co-Surfactants**"); [st.markdown(f"{i+1}. {cs}") for i, cs in enumerate(st.session_state.rec_cs)]
-
-    if st.button("Lock Recommendations & Proceed ➡️"):
-        st.session_state.nav_index = 1
-        st.rerun()
+    if st.button("Proceed to Solubility Selection ➡️"): 
+        st.session_state.nav_index = 1; st.rerun()
 
 # --- STEP 2: SOLUBILITY & SMIX ---
 elif nav == "Step 2: Solubility & Smix":
     st.header("Step 2: Component Solubility & Smix Decision")
     
-    col_sel, col_val = st.columns([2, 1])
+    col_sel, col_val = st.columns([2, 1.5])
     
     with col_sel:
-        st.subheader("Select From Recommendations")
-        # Ensure values exist in recommendations to avoid crash
-        s_o = st.selectbox("Select Oil (from Top 5)", st.session_state.rec_o)
-        s_s = st.selectbox("Select Surfactant (from Top 5)", st.session_state.rec_s)
-        s_cs = st.selectbox("Select Co-Surfactant (from Top 5)", st.session_state.rec_cs)
+        st.markdown("### 1. Selection")
+        s_o = st.selectbox("Select Oil", st.session_state.rec_o)
+        s_s = st.selectbox("Select Surfactant", st.session_state.rec_s)
+        s_cs = st.selectbox("Select Co-Surfactant", st.session_state.rec_cs)
         st.session_state.update({'f_o': s_o, 'f_s': s_s, 'f_cs': s_cs})
 
     with col_val:
-        st.subheader("Solubility Profiling")
-        # Logic to find solubility for the 5 recommended oils
-        sol_list = []
-        for o in st.session_state.rec_o:
-            m = df[(df['Drug_Name'] == st.session_state.drug) & (df['Oil_phase'] == o)]
-            val = m['Sol_Oil'].iloc[0] if not m.empty else np.random.uniform(5, 20)
-            sol_list.append((o, val))
+        st.markdown("### 2. Solubility Profile (Sorted)")
+        targets = [('Oil', 'Sol_Oil', s_o), ('Surfactant', 'Sol_Surf', s_s), ('Co-Surfactant', 'Sol_CoSurf', s_cs)]
+        display_data = []
+        for label, col, name in targets:
+            match = df[(df['Drug_Name'] == st.session_state.drug) & (df[col.split('_')[1]+'_phase' if 'Oil' in col else col.split('_')[1]] == name)] if not df.empty else pd.DataFrame()
+            val = match[col].iloc[0] if not match.empty else np.random.uniform(10, 30)
+            display_data.append((f"{label}: {name}", val))
         
-        # Sort Higher to Lower
-        sol_list.sort(key=lambda x: x[1], reverse=True)
-        for name, val in sol_list:
-            st.write(f"**{name}**: {val:.2f} mg/mL")
+        display_data.sort(key=lambda x: x[1], reverse=True)
+        for text, v in display_data:
+            st.metric(text, f"{v:.2f} mg/mL")
 
     st.divider()
-    st.subheader("Smix Ratio Decision (Surfactant : Co-Surfactant)")
+    st.markdown("### 3. $S_{mix}$ Ratio Selection (As per Diagram)")
+    
+    # Implementing the handwritten layout for 3 options of ratio pairs
     r_cols = st.columns(3)
-    r1 = r_cols[0].selectbox("Ratio 1 (S:CoS)", [1, 2, 3], index=0)
-    r2 = r_cols[1].selectbox("Ratio 2 (S:CoS)", [1, 2, 3], index=1)
-    r3 = r_cols[2].selectbox("Ratio 3 (S:CoS)", [1, 2, 3], index=2)
-    st.session_state.smix_ratios = [r1, r2, r3]
+    for i in range(3):
+        with r_cols[i]:
+            st.write(f"**Option {i+1}**")
+            s_val = st.selectbox(f"Surfactant Part (Opt {i+1})", [1, 2, 3, 4, 5], index=i, key=f"s_r_{i}")
+            cs_val = st.selectbox(f"Co-Surfactant Part (Opt {i+1})", [1, 2, 3, 4, 5], index=0, key=f"cs_r_{i}")
+            st.session_state.smix_pairs[i] = [s_val, cs_val]
 
-    if st.button("Generate Ternary Maps ➡️"):
-        st.session_state.nav_index = 2
-        st.rerun()
+    if st.button("Generate Phase Diagrams ➡️"): 
+        st.session_state.nav_index = 2; st.rerun()
 
-# --- STEP 3: TERNARY MAPPING ---
+# --- STEP 3: TERNARY ---
 elif nav == "Step 3: Ternary Mapping":
-    st.header("Step 3: Ternary Phase Analysis")
+    st.header("Step 3: Ternary Phase Mapping")
     
-    # 3 Ternary Diagrams based on Smix ratios
-    t_cols = st.columns(3)
-    for i, ratio in enumerate(st.session_state.smix_ratios):
-        with t_cols[i]:
-            st.markdown(f"**Smix Ratio {ratio}:1**")
-            # Generate slightly different stable regions based on ratio
-            offset = ratio * 5
-            za, zb = [2, 10+offset, 25, 5, 2], [45, 80-offset, 65, 40, 45]
-            zc = [100 - a - b for a, b in zip(za, zb)]
-            fig = go.Figure(go.Scatterternary({'mode': 'lines', 'fill': 'toself', 'a': za, 'b': zb, 'c': zc, 'fillcolor': f'rgba({50*ratio}, 150, 200, 0.3)'}))
-            fig.update_layout(margin=dict(l=0, r=0, t=30, b=0), height=300)
-            st.plotly_chart(fig, use_container_width=True, key=f"ternary_{i}")
+    # Allow user to choose the diagram first
+    choice_idx = st.radio("Choose Optimized Ternary System to Finalize", [0, 1, 2], 
+                          format_func=lambda x: f"Option {x+1} ($S_{{mix}}$ {st.session_state.smix_pairs[x][0]}:{st.session_state.smix_pairs[x][1]})", horizontal=True)
     
     st.divider()
-    c1, c2 = st.columns(2)
-    with c1:
-        choice = st.radio("Select Optimized Ternary System", [f"Ratio {r}:1" for r in st.session_state.smix_ratios])
-        st.session_state.selected_ternary = choice
-    with c2:
-        st.session_state.neb_region = st.selectbox("Identify Nanoemulsion Region", ["O/W Region", "W/O Region", "Bicontinuous"])
-        st.session_state.o_val = st.slider("Final Oil %", 1, 40, 15)
-        st.session_state.s_val = st.slider("Final Smix %", 10, 80, 40)
+    l, r = st.columns([1, 2])
     
-    if st.button("Finalize & Predict ➡️"):
-        st.session_state.nav_index = 3
-        st.rerun()
+    with l:
+        st.markdown("### Composition Adjustment")
+        st.session_state.o_val = st.slider("Oil %", 1.0, 50.0, st.session_state.o_val)
+        st.session_state.s_val = st.slider("Smix %", 1.0, 90.0, st.session_state.s_val)
+        w_val = 100 - st.session_state.o_val - st.session_state.s_val
+        st.metric("Water %", f"{w_val:.2f}%")
+        st.session_state.w_val = w_val
+        st.session_state.final_smix_choice = f"{st.session_state.smix_pairs[choice_idx][0]}:{st.session_state.smix_pairs[choice_idx][1]}"
+
+    with r:
+        ratio_sum = sum(st.session_state.smix_pairs[choice_idx])
+        # Simulation of nanoemulsion region based on surfactant ratio
+        area_scale = st.session_state.smix_pairs[choice_idx][0] / ratio_sum
+        za = [2, 10 + (area_scale*15), 25, 5, 2]
+        zb = [40, 85 - (area_scale*10), 60, 35, 40]
+        zc = [100 - a - b for a, b in zip(za, zb)]
+        
+        fig = go.Figure(go.Scatterternary({'mode': 'lines', 'fill': 'toself', 'name': 'Nanoemulsion Region', 'a': za, 'b': zb, 'c': zc, 'fillcolor': 'rgba(34, 139, 34, 0.4)'}))
+        fig.add_trace(go.Scatterternary(a=[st.session_state.o_val], b=[st.session_state.s_val], c=[w_val], name="Selected Formula", marker=dict(color='red', size=15, symbol='diamond')))
+        fig.update_layout(ternary=dict(aaxis_title="Oil %", baxis_title="Smix %", caxis_title="Water %"))
+        st.plotly_chart(fig, use_container_width=True)
+
+    if st.button("Generate AI Predictions ➡️"): 
+        st.session_state.nav_index = 3; st.rerun()
 
 # --- STEP 4: PREDICTION ---
 elif nav == "Step 4: AI Prediction":
-    st.header(f"Final AI Analysis: {st.session_state.drug}")
+    st.header(f"Step 4: Professional AI Analysis")
     
     def safe_enc(col, val): return encoders[col].transform([val])[0] if val in encoders[col].classes_ else 0
     in_d = pd.DataFrame([{'Drug_Name': safe_enc('Drug_Name', st.session_state.drug), 'Oil_phase': safe_enc('Oil_phase', st.session_state.f_o), 'Surfactant': safe_enc('Surfactant', st.session_state.f_s), 'Co-surfactant': safe_enc('Co-surfactant', st.session_state.f_cs)}])
@@ -192,24 +213,35 @@ elif nav == "Step 4: AI Prediction":
     res = {t: models[t].predict(in_d)[0] for t in models}
     stab = min(100, max(0, (min(abs(res['Zeta_mV']), 30)/30*70) + (max(0, 0.5-res['PDI'])/0.5*30)))
     
-    c = st.columns(5)
-    c[0].metric("Size", f"{res['Size_nm']:.1f} nm"); c[1].metric("PDI", f"{res['PDI']:.3f}")
-    c[2].metric("Zeta", f"{res['Zeta_mV']:.1f} mV"); c[3].metric("%EE", f"{res['Encapsulation_Efficiency']:.1f}%")
-    c[4].metric("Stability", f"{stab:.1f}%")
+    # Professional Metric Dashboard
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Particle Size", f"{res['Size_nm']:.1f} nm"); m2.metric("PDI", f"{res['PDI']:.3f}")
+    m3.metric("Zeta Potential", f"{res['Zeta_mV']:.1f} mV"); m4.metric("EE %", f"{res['Encapsulation_Efficiency']:.1f}%")
+    m5.metric("Stability Index", f"{stab:.1f}%")
     
     st.divider()
+    st.subheader("High-Resolution SHAP Interpretability")
     explainer = shap.TreeExplainer(models['Size_nm'])
-    sv = explainer.shap_values(in_d)
-    fig_sh, ax = plt.subplots(figsize=(10, 3))
-    shap.summary_plot(sv, in_d, feature_names=['Drug', 'Oil', 'Surf', 'Co-S'], plot_type="bar", show=False)
-    st.pyplot(fig_sh)
+    shap_values = explainer.shap_values(in_d)
+    
+    fig, ax = plt.subplots(figsize=(12, 4))
+    # Using a more professional force plot or bar summary
+    shap.plots.bar(explainer(in_d)[0], show=False)
+    plt.title("Impact of Formulation Components on Particle Size")
+    st.pyplot(plt.gcf())
 
-    if st.button("Generate Final Report"):
+    if st.button("Generate Professional PDF Report"):
         pdf = FPDF()
         pdf.add_page(); pdf.set_font("Arial", 'B', 16)
-        pdf.cell(200, 10, "NanoPredict Pro AI Final Report", ln=True, align='C')
+        pdf.cell(200, 10, "NanoPredict Pro AI: Research Summary", ln=True, align='C')
         pdf.set_font("Arial", '', 11); pdf.ln(10)
-        pdf.cell(0, 8, f"Drug: {st.session_state.drug}", ln=True)
-        pdf.cell(0, 8, f"System: {st.session_state.f_o} | Smix ({st.session_state.selected_ternary})", ln=True)
-        pdf.cell(0, 8, f"Final Composition: Oil {st.session_state.o_val}% | Smix {st.session_state.s_val}%", ln=True)
-        st.download_button("Download PDF", data=pdf.output(dest='S').encode('latin-1'), file_name="NanoReport.pdf")
+        pdf.cell(0, 10, f"Drug Candidate: {st.session_state.drug}", ln=True)
+        pdf.cell(0, 10, f"Excipients: {st.session_state.f_o} | {st.session_state.f_s} | {st.session_state.f_cs}", ln=True)
+        pdf.cell(0, 10, f"Final Ratio (Smix): {st.session_state.final_smix_choice}", ln=True)
+        pdf.cell(0, 10, f"Predicted Size: {res['Size_nm']:.2f} nm", ln=True)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            plt.gcf().savefig(tmp.name, bbox_inches='tight')
+            pdf.image(tmp.name, x=10, y=80, w=190)
+        
+        st.download_button("📥 Download Official Report", data=pdf.output(dest='S').encode('latin-1'), file_name="NanoPredict_Report.pdf")
