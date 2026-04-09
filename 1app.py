@@ -122,11 +122,16 @@ if nav == "Step 1: Sourcing":
     
     source_mode = st.radio("Sourcing Method:", ["Database Selection", "SMILES Input", "Upload New Data"], horizontal=True)
     
-    if source_mode == "Database Selection":
-        # Convert to string and filter out any None/NaN before sorting
-drug_list = sorted([str(x) for x in df['Drug_Name'].unique() if pd.notna(x)])
-st.session_state.drug = st.selectbox("Select Drug", drug_list)
-        st.session_state.drug = st.selectbox("Select Drug", drug_list)
+   if source_mode == "Database Selection":
+    if df is not None and not df.empty:
+        # 1. Get unique names
+        uniques = df['Drug_Name'].unique()
+        # 2. Clean and Sort
+        drug_list = sorted([str(x) for x in uniques if pd.notna(x)])
+        # 3. Display selectbox
+        st.session_state.drug = st.selectbox("Select Drug from Database", drug_list)
+    else:
+        st.warning("⚠️ No data available. Please upload a CSV file in the 'Upload New Data' tab.")
         
     elif source_mode == "SMILES Input" and RDKIT_AVAILABLE:
         smiles = st.text_input("Enter SMILES", "CN(C)CCOC1=CC=C(C=C1)C(=C(C2=CC=CC=C2)CC)C3=CC=CC=C3")
