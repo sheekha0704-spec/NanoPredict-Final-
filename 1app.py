@@ -171,39 +171,99 @@ elif nav == "Step 2: Solubility & Smix":
     if st.button("Generate Ternary Maps ➡️"): 
         st.session_state.nav_index = 2; st.rerun()
 
-# --- STEP 3: TERNARY ---
+# --- STEP 3: TERNARY MAPPING (REFINE & STABILIZE) ---
 elif nav == "Step 3: Ternary Mapping":
-    st.header("Step 3: Phase Mapping")
+    st.header("Step 3: Ternary Phase Mapping Analysis")
     
-    # Selection first, as requested
-    choice_idx = st.radio(
-        "Select Optimized Ternary System:", 
-        [0, 1, 2], 
-        format_func=lambda x: f"Option {x+1} (Smix {st.session_state.smix_pairs[x][0]}:{st.session_state.smix_pairs[x][1]})",
-        horizontal=True
-    )
+    # 1. Smix Selection logic based on Step 2 inputs
+    st.subheader("Finalize Formulation Parameters")
+    
+    # Using the specific ratio pairs defined in your manual sketch
+    smix_options = [
+        f"Option 1 (Ratio {st.session_state.smix_pairs[0][0]}:{st.session_state.smix_pairs[0][1]})",
+        f"Option 2 (Ratio {st.session_state.smix_pairs[1][0]}:{st.session_state.smix_pairs[1][1]})",
+        f"Option 3 (Ratio {st.session_state.smix_pairs[2][0]}:{st.session_state.smix_pairs[2][1]})"
+    ]
+    
+    choice = st.radio("Select Optimized Smix Ratio:", smix_options, horizontal=True)
+    choice_idx = smix_options.index(choice)
     
     st.divider()
-    l, r = st.columns([1, 2])
-    with l:
-        st.session_state.o_val = st.slider("Oil %", 1.0, 50.0, st.session_state.o_val)
-        st.session_state.s_val = st.slider("Smix %", 1.0, 80.0, st.session_state.s_val)
-        w_val = 100 - st.session_state.o_val - st.session_state.s_val
-        st.metric("Water %", f"{w_val:.2f}%")
+    
+    col_input, col_map = st.columns([1, 2])
+    
+    with col_input:
+        st.markdown("### Composition Adjustment")
+        
+        # We ensure the default values are within the min/max range to avoid StreamlitAPIException
+        # Oil slider (Range 1.0 to 50.0)
+        o_val = st.slider("Oil %", 1.0, 50.0, float(st.session_state.get('o_val', 10.0)))
+        
+        # Smix slider (Range 1.0 to 80.0)
+        s_val = st.slider("Smix %", 1.0, 80.0, float(st.session_state.get('s_val', 40.0)))
+        
+        # Calculate Water % automatically
+        w_val = max(0.0, 100.0 - o_val - s_val)
+        
+        # Store back to state safely
+        st.session_state.o_val = o_val
+        st.session_state.s_val = s_val
+        st.session_state.w_val = w_val
         st.session_state.final_smix_choice = f"{st.session_state.smix_pairs[choice_idx][0]}:{st.session_state.smix_pairs[choice_idx][1]}"
 
-    with r:
-        s_ratio = st.session_state.smix_pairs[choice_idx][0]
-        za = [2, 10 + (s_ratio*4), 20, 5, 2]
-        zb = [45, 85 - (s_ratio*4), 60, 40, 45]
-        zc = [100 - a - b for a, b in zip(za, zb)]
-        fig = go.Figure(go.Scatterternary({'mode': 'lines', 'fill': 'toself', 'a': za, 'b': zb, 'c': zc, 'fillcolor': 'rgba(46, 204, 113, 0.3)', 'name': 'Nanoemulsion Region'}))
-        fig.add_trace(go.Scatterternary(a=[st.session_state.o_val], b=[st.session_state.s_val], c=[w_val], marker=dict(color='red', size=12, symbol='diamond')))
-        fig.update_layout(ternary=dict(aaxis_title="Oil", baxis_title="Smix", caxis_title="Water"))
+        st.info(f"**Current Formulation:**\n* Oil: {o_val}%\n* Smix: {s_val}%\n* Water: {w_val:.2f}%")
+
+    with col_map:
+        st.markdown(f"### Ternary Diagram: Smix {st.session_state.final_smix_choice}")
+        
+        # Dynamically adjust the "Nanoemulsion Region" (the green area) 
+        # based on the selected Smix Ratio Part 1 (Surfactant part)
+        s_ratio_impact = st.session_state.smix_pairs[choice_idx][0]
+        
+        # Define ternary boundary points
+        # a: Oil, b: Smix, c: Water
+        za = [2, 8 + (s_ratio_impact * 3), 18, 5, 2]
+        zb = [40, 80 - (s_ratio_impact * 2), 55, 30, 40]
+        zc = [100 - a_ - b_ for a_, b_ in zip(za, zb)]
+        
+        fig = go.Figure(go.Scatterternary({
+            'mode': 'lines',
+            'fill': 'toself',
+            'a': za, 'b': zb, 'c': zc,
+            'fillcolor': 'rgba(46, 204, 113, 0.4)',
+            'name': 'Nanoemulsion Region (O/W)'
+        }))
+
+        # Add the "Selected Formula" diamond marker
+        fig.add_trace(go.Scatterternary(
+            a=[o_val], b=[s_val], c=[w_val],
+            name="Target Point",
+            marker=dict(color='red', size=14, symbol='diamond', line=dict(width=2, color='white'))
+        ))
+
+        fig.update_layout({
+            'ternary': {
+                'sum': 100,
+                'aaxis': {'title': 'Oil %', 'min': 0, 'linewidth': 2},
+                'baxis': {'title': 'Smix %', 'min': 0, 'linewidth': 2},
+                'caxis': {'title': 'Water %', 'min': 0, 'linewidth': 2}
+            },
+            'showlegend': True,
+            'height': 500,
+            'margin': dict(l=0, r=0, t=30, b=0)
+        })
+        
         st.plotly_chart(fig, use_container_width=True)
 
-    if st.button("Finalize & Predict ➡️"): 
-        st.session_state.nav_index = 3; st.rerun()
+    st.divider()
+    
+    if st.button("Finalize System & Run AI Prediction ➡️"):
+        # Before jumping, verify the values meet nanoemulsion criteria
+        if o_val + s_val >= 100:
+            st.warning("Total Oil and Smix cannot exceed 100%. Please adjust sliders.")
+        else:
+            st.session_state.nav_index = 3
+            st.rerun()
 
 # --- STEP 4: PREDICTION ---
 elif nav == "Step 4: AI Prediction":
