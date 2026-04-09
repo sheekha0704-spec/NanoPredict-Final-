@@ -123,7 +123,9 @@ if nav == "Step 1: Sourcing":
     source_mode = st.radio("Sourcing Method:", ["Database Selection", "SMILES Input", "Upload New Data"], horizontal=True)
     
     if source_mode == "Database Selection":
-        drug_list = sorted(df['Drug_Name'].unique())
+        # Convert to string and filter out any None/NaN before sorting
+drug_list = sorted([str(x) for x in df['Drug_Name'].unique() if pd.notna(x)])
+st.session_state.drug = st.selectbox("Select Drug", drug_list)
         st.session_state.drug = st.selectbox("Select Drug", drug_list)
         
     elif source_mode == "SMILES Input" and RDKIT_AVAILABLE:
