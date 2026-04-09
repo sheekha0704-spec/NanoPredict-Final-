@@ -122,7 +122,7 @@ if nav == "Step 1: Sourcing":
     
     source_mode = st.radio("Sourcing Method:", ["Database Selection", "SMILES Input", "Upload New Data"], horizontal=True)
     
-   if source_mode == "Database Selection":
+   if source_mode == "Database Selection"
     if df is not None and not df.empty:
         # 1. Get unique names
         uniques = df['Drug_Name'].unique()
